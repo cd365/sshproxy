@@ -1,0 +1,18 @@
+# jetbrains
+.idea
+
+# mac
+.DS_Store
+
+# vscode
+.devcontainer
+.vscode
+
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.env
