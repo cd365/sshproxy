@@ -10,3 +10,4 @@
 
 # start with environment variables
 SSH_PROXY_HOST=example.com SSH_PROXY_PORT=22 SSH_PROXY_USER=hello SSH_PROXY_PRIVATE_KEY=~/.ssh/id_rsa SSH_PROXY_LOCAL_PORT=3306 SSH_PROXY_TARGET_HOST=127.0.0.1 SSH_PROXY_TARGET_PORT=3306 ./sshproxy
+```
