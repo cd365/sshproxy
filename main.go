@@ -150,9 +150,10 @@ func main() {
 
 	flag.BoolVar(&daemon, "d", false, "background process run this program use -d")
 
-	flag.IntVar(&localPort, "l", 3306, "local listen port; SSH_PROXY_LOCAL_PORT")
 	flag.StringVar(&targetHost, "h", "127.0.0.1", "target host; SSH_PROXY_TARGET_HOST")
 	flag.IntVar(&targetPort, "p", 3306, "target port; SSH_PROXY_TARGET_PORT")
+
+	flag.IntVar(&localPort, "l", 3306, "local listen port; SSH_PROXY_LOCAL_PORT")
 	flag.Parse()
 
 	if daemon {
