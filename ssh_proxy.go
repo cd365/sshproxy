@@ -43,21 +43,21 @@ type SshProxy struct {
 }
 
 // Start starts the SSH proxy server.
-func (proxy *SshProxy) Start(ctx context.Context, serviceServeAddress string, localListenPort int) error {
+func (proxy *SshProxy) Start(ctx context.Context, serviceServeAddress string, localListenAddress string) error {
 	// Create SSH client configuration.
 	clientConfig, err := proxy.sshClientConfig()
 	if err != nil {
-		return fmt.Errorf("failed to create SSH client config: %v", err)
+		return fmt.Errorf("failed to create ssh client config: %v", err)
 	}
 
 	// Start local TCP listener.
-	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", localListenPort))
+	listener, err := net.Listen("tcp", localListenAddress)
 	if err != nil {
 		return fmt.Errorf("failed to start local listener: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
 
-	logger.Info(fmt.Sprintf("SSH proxy server started. Listening on port %d...", localListenPort))
+	logger.Info(fmt.Sprintf("ssh proxy server started. listening on %s ...", localListenAddress))
 
 	ok := true
 	go func() {
@@ -79,7 +79,7 @@ func (proxy *SshProxy) Start(ctx context.Context, serviceServeAddress string, lo
 		// Dial SSH server.
 		sshConn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Cfg.Host, proxy.Cfg.Port), clientConfig)
 		if err != nil {
-			logger.Error(fmt.Sprintf("failed to dial SSH server: %s", err.Error()))
+			logger.Error(fmt.Sprintf("failed to dial ssh server: %s", err.Error()))
 			_ = localConn.Close()
 			continue
 		}
@@ -149,7 +149,7 @@ const (
 	SshProxyServiceLocalPrivateKey = "SSH_PROXY_SERVICE_LOCAL_PRIVATE_KEY" // 本机SSH私钥
 	SshProxyServiceLocalKnownHosts = "SSH_PROXY_SERVICE_LOCAL_KNOWN_HOSTS" // 本机SSH known_hosts 文件 (用于校验远程服务器的公钥, 防止中间人攻击)
 	SshProxyServiceServeAddress    = "SSH_PROXY_SERVICE_SERVE_ADDRESS"     // 待暴露SSH服务器的应用
-	SshProxyServiceLocalPort       = "SSH_PROXY_SERVICE_LOCAL_PORT"        // 暴露到本地的端口
+	SshProxyServiceLocalAddress    = "SSH_PROXY_SERVICE_LOCAL_ADDRESS"     // 暴露到本地的监听地址
 )
 
 var (
@@ -164,7 +164,7 @@ var (
 
 	sshProxyServiceLocalPrivateKey = "" // ssh service private key ~/.ssh/id_rsa
 	sshProxyServiceLocalKnownHosts = "" // ssh service private key ~/.ssh/known_hosts
-	sshProxyServiceLocalPort       = 0  // local listen port
+	sshProxyServiceLocalAddress    = "" // local listen address (host + port)
 )
 
 func main() {
@@ -187,7 +187,7 @@ func main() {
 	flag.StringVar(&sshProxyServiceLocalKnownHosts, "K", pathLocalKnownHosts, "local ssh known_hosts; "+SshProxyServiceLocalKnownHosts)
 
 	// local exposure
-	flag.IntVar(&sshProxyServiceLocalPort, "p", 10800, "local listen port; "+SshProxyServiceLocalPort)
+	flag.StringVar(&sshProxyServiceLocalAddress, "l", "127.0.0.1:1081", "local listen port; "+SshProxyServiceLocalAddress)
 
 	flag.BoolVar(&daemon, "d", false, "background process run this program use -d")
 	flag.Parse()
@@ -226,19 +226,17 @@ func main() {
 		if tmp := os.Getenv(SshProxyServicePass); tmp != "" {
 			sshProxyServicePass = tmp
 		}
+		if tmp := os.Getenv(SshProxyServiceServeAddress); tmp != "" {
+			sshProxyServiceServeAddress = tmp
+		}
 		if tmp := os.Getenv(SshProxyServiceLocalPrivateKey); tmp != "" {
 			sshProxyServiceLocalPrivateKey = tmp
 		}
 		if tmp := os.Getenv(SshProxyServiceLocalKnownHosts); tmp != "" {
 			sshProxyServiceLocalKnownHosts = tmp
 		}
-		if tmp := os.Getenv(SshProxyServiceLocalPort); tmp != "" {
-			if i64, err := strconv.ParseInt(tmp, 10, 64); err == nil && i64 > 0 && i64 < 1<<16 {
-				sshProxyServiceLocalPort = int(i64)
-			}
-		}
-		if tmp := os.Getenv(SshProxyServiceServeAddress); tmp != "" {
-			sshProxyServiceServeAddress = tmp
+		if tmp := os.Getenv(SshProxyServiceLocalAddress); tmp != "" {
+			sshProxyServiceLocalAddress = tmp
 		}
 	}
 
@@ -326,9 +324,9 @@ func main() {
 		go func() {
 			defer wg.Done()
 			// start ssh proxy server
-			err := proxy.Start(ctx, sshProxyServiceServeAddress, sshProxyServiceLocalPort)
+			err := proxy.Start(ctx, sshProxyServiceServeAddress, sshProxyServiceLocalAddress)
 			if err != nil {
-				logger.Error(fmt.Sprintf("failed to start SSH proxy server: %v", err))
+				logger.Error(fmt.Sprintf("failed to start ssh proxy server: %v", err))
 				stop(err)
 			}
 		}()

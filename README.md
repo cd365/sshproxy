@@ -6,8 +6,9 @@
 > 2. Applications that can only be accessed through a certain server.
 
 ```bash
-./sshproxy -H example.com -P 22 -U hello -F ~/.ssh/id_rsa -h 127.0.0.1 -p 3306 -l 3306
+./sshproxy -H example.com -P 22 -U hello -W your-password -s 127.0.0.1:1080 -l 127.0.0.1:1081
+./sshproxy -H example.com -P 22 -U hello -F /home/hello/.ssh/id_rsa -K /home/hello/.ssh/known_hosts -s 127.0.0.1:1080 -l 127.0.0.1:1081
 
 # start with environment variables
-SSH_PROXY_HOST=example.com SSH_PROXY_PORT=22 SSH_PROXY_USER=hello SSH_PROXY_PRIVATE_KEY=~/.ssh/id_rsa SSH_PROXY_TARGET_HOST=127.0.0.1 SSH_PROXY_TARGET_PORT=3306 SSH_PROXY_LOCAL_PORT=3306 ./sshproxy
+SSH_PROXY_SERVICE_HOST=example.com SSH_PROXY_SERVICE_PORT=22 SSH_PROXY_SERVICE_USER=hello SSH_PROXY_SERVICE_LOCAL_PRIVATE_KEY=~/.ssh/id_rsa SSH_PROXY_SERVICE_LOCAL_KNOWN_HOSTS=~/.ssh/known_hosts SSH_PROXY_SERVICE_SERVE_ADDRESS=127.0.0.1:1080 SSH_PROXY_SERVICE_LOCAL_ADDRESS=127.0.0.1:1081 ./sshproxy
 ```
