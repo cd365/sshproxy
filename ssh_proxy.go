@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/cd365/logger/v3"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"io"
 	"net"
 	"os"
@@ -31,6 +32,9 @@ type SshCfg struct {
 
 	// Private key authentication.
 	PrivateKey []byte
+
+	// KnownHostsFilePath ssh known_hosts file.
+	KnownHostsFilePath string
 }
 
 // SshProxy represents the SSH proxy server.
@@ -105,11 +109,15 @@ func (proxy *SshProxy) copy(src, dst net.Conn) {
 
 // sshClientConfig creates SSH client configuration based on SshCfg.
 func (proxy *SshProxy) sshClientConfig() (*ssh.ClientConfig, error) {
-	authMethods := make([]ssh.AuthMethod, 0, 2)
+	cfg := &ssh.ClientConfig{
+		User:    proxy.Cfg.User,
+		Auth:    make([]ssh.AuthMethod, 0, 2),
+		Timeout: 30 * time.Second,
+	}
 
 	// Use password authentication if provided.
 	if proxy.Cfg.Password != "" {
-		authMethods = append(authMethods, ssh.Password(proxy.Cfg.Password))
+		cfg.Auth = append(cfg.Auth, ssh.Password(proxy.Cfg.Password))
 	}
 
 	// Use private key authentication if provided.
@@ -118,57 +126,67 @@ func (proxy *SshProxy) sshClientConfig() (*ssh.ClientConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse private key: %v", err)
 		}
-		authMethods = append(authMethods, ssh.PublicKeys(key))
+
+		cfg.Auth = append(cfg.Auth, ssh.PublicKeys(key))
 	}
 
-	return &ssh.ClientConfig{
-		User: proxy.Cfg.User,
-		Auth: authMethods,
-		// Disable host key checking. In a real application, you should verify the host key.
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         30 * time.Second,
-	}, nil
+	if proxy.Cfg.KnownHostsFilePath != "" {
+		hostKeyCallback, err := knownhosts.New(proxy.Cfg.KnownHostsFilePath) /* ~/.ssh/known_hosts */
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse known_hosts: %s", err.Error())
+		}
+		cfg.HostKeyCallback = hostKeyCallback
+	}
+
+	return cfg, nil
 }
 
 const (
-	SshProxyServiceHost       = "SSH_PROXY_SERVICE_HOST"
-	SshProxyServicePort       = "SSH_PROXY_SERVICE_PORT"
-	SshProxyServiceUser       = "SSH_PROXY_SERVICE_USER"
-	SshProxyServicePass       = "SSH_PROXY_SERVICE_PASS"
-	SshProxyServicePrivateKey = "SSH_PROXY_SERVICE_PRIVATE_KEY"
-
-	SshProxyServiceServeAddress = "SSH_PROXY_SERVICE_SERVE_ADDRESS"
-
-	SshProxyServiceLocalPort = "SSH_PROXY_SERVICE_LOCAL_PORT"
+	SshProxyServiceHost            = "SSH_PROXY_SERVICE_HOST"              // SSH服务主机地址
+	SshProxyServicePort            = "SSH_PROXY_SERVICE_PORT"              // SSH服务主机端口
+	SshProxyServiceUser            = "SSH_PROXY_SERVICE_USER"              // SSH服务用户名
+	SshProxyServicePass            = "SSH_PROXY_SERVICE_PASS"              // SSH服务用户密码
+	SshProxyServiceLocalPrivateKey = "SSH_PROXY_SERVICE_LOCAL_PRIVATE_KEY" // 本机SSH私钥
+	SshProxyServiceLocalKnownHosts = "SSH_PROXY_SERVICE_LOCAL_KNOWN_HOSTS" // 本机SSH known_hosts 文件 (用于校验远程服务器的公钥, 防止中间人攻击)
+	SshProxyServiceServeAddress    = "SSH_PROXY_SERVICE_SERVE_ADDRESS"     // 待暴露SSH服务器的应用
+	SshProxyServiceLocalPort       = "SSH_PROXY_SERVICE_LOCAL_PORT"        // 暴露到本地的端口
 )
 
 var (
 	daemon bool // background process run this program
 	debug  bool // run in debug mode
 
-	sshProxyServiceHost       = "" // ssh service host
-	sshProxyServicePort       = 0  // ssh service port
-	sshProxyServiceUser       = "" // ssh service username
-	sshProxyServicePass       = "" // ssh service password of username
-	sshProxyServicePrivateKey = "" // ssh service private key ~/.ssh/id_rsa
-
+	sshProxyServiceHost         = "" // ssh service host
+	sshProxyServicePort         = 0  // ssh service port
+	sshProxyServiceUser         = "" // ssh service username
+	sshProxyServicePass         = "" // ssh service password of username
 	sshProxyServiceServeAddress = "" // serve address (host + port)
 
-	sshProxyServiceLocalPort = 0 // local listen port
+	sshProxyServiceLocalPrivateKey = "" // ssh service private key ~/.ssh/id_rsa
+	sshProxyServiceLocalKnownHosts = "" // ssh service private key ~/.ssh/known_hosts
+	sshProxyServiceLocalPort       = 0  // local listen port
 )
 
 func main() {
+
+	userHomeDir, _ := os.UserHomeDir()
+	pathLocalKnownHosts := ""
+	if userHomeDir != "" {
+		pathLocalKnownHosts = path.Join(userHomeDir, ".ssh", "known_hosts")
+	}
+
 	flag.BoolVar(&debug, "e", false, "run in debug mode")
 
 	// remote server
-	flag.StringVar(&sshProxyServiceHost, "H", "example.com", "ssh server host; "+SshProxyServiceHost)
+	flag.StringVar(&sshProxyServiceHost, "H", "192.168.0.1", "ssh server host; "+SshProxyServiceHost)
 	flag.IntVar(&sshProxyServicePort, "P", 22, "ssh server port; "+SshProxyServicePort)
-	flag.StringVar(&sshProxyServiceUser, "U", "root", "ssh username; "+SshProxyServiceUser)
-	flag.StringVar(&sshProxyServicePass, "W", "", "password for ssh username; "+SshProxyServicePass)
-	flag.StringVar(&sshProxyServicePrivateKey, "F", "", "private key for ssh username; "+SshProxyServicePrivateKey)
-
+	flag.StringVar(&sshProxyServiceUser, "U", "root", "ssh server username; "+SshProxyServiceUser)
+	flag.StringVar(&sshProxyServicePass, "W", "", "password for ssh server username; "+SshProxyServicePass)
 	flag.StringVar(&sshProxyServiceServeAddress, "s", "127.0.0.1:1080", "serve address; "+SshProxyServiceServeAddress)
+	flag.StringVar(&sshProxyServiceLocalPrivateKey, "F", "", "local ssh private key for ssh username; "+SshProxyServiceLocalPrivateKey)
+	flag.StringVar(&sshProxyServiceLocalKnownHosts, "K", pathLocalKnownHosts, "local ssh known_hosts; "+SshProxyServiceLocalKnownHosts)
 
+	// local exposure
 	flag.IntVar(&sshProxyServiceLocalPort, "p", 10800, "local listen port; "+SshProxyServiceLocalPort)
 
 	flag.BoolVar(&daemon, "d", false, "background process run this program use -d")
@@ -208,8 +226,11 @@ func main() {
 		if tmp := os.Getenv(SshProxyServicePass); tmp != "" {
 			sshProxyServicePass = tmp
 		}
-		if tmp := os.Getenv(SshProxyServicePrivateKey); tmp != "" {
-			sshProxyServicePrivateKey = tmp
+		if tmp := os.Getenv(SshProxyServiceLocalPrivateKey); tmp != "" {
+			sshProxyServiceLocalPrivateKey = tmp
+		}
+		if tmp := os.Getenv(SshProxyServiceLocalKnownHosts); tmp != "" {
+			sshProxyServiceLocalKnownHosts = tmp
 		}
 		if tmp := os.Getenv(SshProxyServiceLocalPort); tmp != "" {
 			if i64, err := strconv.ParseInt(tmp, 10, 64); err == nil && i64 > 0 && i64 < 1<<16 {
@@ -231,7 +252,7 @@ func main() {
 		}
 	}
 
-	// SSH server configuration
+	// SSH server configure
 	cfg := &SshCfg{
 		Host:       sshProxyServiceHost,
 		Port:       sshProxyServicePort,
@@ -240,18 +261,32 @@ func main() {
 		PrivateKey: nil,                 // specify private key bytes if using private key authentication.
 	}
 
-	if sshProxyServicePrivateKey == "" {
-		if currentUserHomeDir, err := os.UserHomeDir(); err == nil {
-			currentUserSshPrivateKey := path.Join(currentUserHomeDir, ".ssh", "id_rsa")
-			if stat, fer := os.Stat(currentUserSshPrivateKey); fer == nil && !stat.IsDir() {
-				sshProxyServicePrivateKey = currentUserSshPrivateKey
+	if sshProxyServiceLocalPrivateKey != "" {
+		statPrivateKey, errPrivateKey := os.Stat(sshProxyServiceLocalPrivateKey)
+		if errPrivateKey == nil && !statPrivateKey.IsDir() {
+			privateKey, errRead := os.ReadFile(sshProxyServiceLocalPrivateKey)
+			if errRead == nil {
+				cfg.PrivateKey = privateKey
 			}
 		}
 	}
 
-	if sshProxyServicePrivateKey != "" {
-		if privateKey, err := os.ReadFile(sshProxyServicePrivateKey); err == nil {
-			cfg.PrivateKey = privateKey
+	statKnownHosts, errKnownHosts := os.Stat(sshProxyServiceLocalKnownHosts)
+	if errKnownHosts == nil && !statKnownHosts.IsDir() {
+		cfg.KnownHostsFilePath = sshProxyServiceLocalKnownHosts
+	}
+
+	if cfg.PrivateKey == nil && cfg.Password == "" {
+		fmt.Println("Please set ssh private key or password")
+		return
+	}
+
+	// private key first
+	if cfg.PrivateKey != nil && cfg.Password != "" {
+		cfg.Password = ""
+		if cfg.KnownHostsFilePath == "" {
+			fmt.Println("Please set ssh known_hosts")
+			return
 		}
 	}
 
