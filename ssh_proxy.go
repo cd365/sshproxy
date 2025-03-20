@@ -4,11 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/cd365/logger/v3"
+	"github.com/cd365/logger/v8"
+	"github.com/rs/zerolog"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"io"
 	"net"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -57,7 +60,7 @@ func (proxy *SshProxy) Start(ctx context.Context, serviceServeAddress string, lo
 	}
 	defer func() { _ = listener.Close() }()
 
-	logger.Info(fmt.Sprintf("ssh proxy server started. listening on %s ...", localListenAddress))
+	logger.Info().Msg(fmt.Sprintf("ssh proxy server started. listening on %s ...", localListenAddress))
 
 	ok := true
 	go func() {
@@ -72,14 +75,14 @@ func (proxy *SshProxy) Start(ctx context.Context, serviceServeAddress string, lo
 	for ok {
 		localConn, err := listener.Accept()
 		if err != nil {
-			logger.Error(fmt.Sprintf("failed to accept local connection: %s", err.Error()))
+			logger.Error().Msg(fmt.Sprintf("failed to accept local connection: %s", err.Error()))
 			continue
 		}
 
 		// Dial SSH server.
 		sshConn, err := ssh.Dial("tcp", fmt.Sprintf("%s:%d", proxy.Cfg.Host, proxy.Cfg.Port), clientConfig)
 		if err != nil {
-			logger.Error(fmt.Sprintf("failed to dial ssh server: %s", err.Error()))
+			logger.Error().Msg(fmt.Sprintf("failed to dial ssh server: %s", err.Error()))
 			_ = localConn.Close()
 			continue
 		}
@@ -87,7 +90,7 @@ func (proxy *SshProxy) Start(ctx context.Context, serviceServeAddress string, lo
 		// Dial remote host through SSH tunnel.
 		serveConn, err := sshConn.Dial("tcp", serviceServeAddress)
 		if err != nil {
-			logger.Error(fmt.Sprintf("failed to dial remote host: %s", err.Error()))
+			logger.Error().Msg(fmt.Sprintf("failed to dial remote host: %s", err.Error()))
 			_ = localConn.Close()
 			_ = sshConn.Close()
 			continue
@@ -153,8 +156,9 @@ const (
 )
 
 var (
-	daemon bool // background process run this program
-	debug  bool // run in debug mode
+	daemon      bool   // background process run this program
+	debug       bool   // run in debug mode
+	pprofListen string // pprof listen address
 
 	sshProxyServiceHost         = "" // ssh service host
 	sshProxyServicePort         = 0  // ssh service port
@@ -176,6 +180,7 @@ func main() {
 	}
 
 	flag.BoolVar(&debug, "e", false, "run in debug mode")
+	flag.StringVar(&pprofListen, "x", ":12321", "debug listen address")
 
 	// remote server
 	flag.StringVar(&sshProxyServiceHost, "H", "192.168.0.1", "ssh server host; "+SshProxyServiceHost)
@@ -242,11 +247,12 @@ func main() {
 
 	{
 		if debug {
-			logger.DefaultLogger.HandlerOptions.AddSource = true
-			logger.DefaultLogger.LevelVar.Set(logger.LevelAll)
+			logger.Default().SetLevel(zerolog.TraceLevel)
+			logger.Default().CustomContext(func(ctx zerolog.Context) zerolog.Logger {
+				return ctx.Caller().Logger()
+			})
 		} else {
-			logger.DefaultLogger.HandlerOptions.AddSource = false
-			logger.DefaultLogger.LevelVar.Set(logger.LevelOff)
+			logger.Default().SetLevel(zerolog.Disabled)
 		}
 	}
 
@@ -326,7 +332,15 @@ func main() {
 			// start ssh proxy server
 			err := proxy.Start(ctx, sshProxyServiceServeAddress, sshProxyServiceLocalAddress)
 			if err != nil {
-				logger.Error(fmt.Sprintf("failed to start ssh proxy server: %v", err))
+				logger.Error().Msg(fmt.Sprintf("failed to start ssh proxy server: %v", err))
+				stop(err)
+			}
+		}()
+	}
+
+	if debug {
+		go func() {
+			if err := http.ListenAndServe(pprofListen, nil); err != nil {
 				stop(err)
 			}
 		}()
