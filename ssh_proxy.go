@@ -174,8 +174,10 @@ var (
 func main() {
 
 	userHomeDir, _ := os.UserHomeDir()
+	pathLocalPrivateKey := ""
 	pathLocalKnownHosts := ""
 	if userHomeDir != "" {
+		pathLocalPrivateKey = path.Join(userHomeDir, ".ssh", "id_rsa")
 		pathLocalKnownHosts = path.Join(userHomeDir, ".ssh", "known_hosts")
 	}
 
@@ -188,7 +190,7 @@ func main() {
 	flag.StringVar(&sshProxyServiceUser, "U", "root", "ssh server username; "+SshProxyServiceUser)
 	flag.StringVar(&sshProxyServicePass, "W", "", "password for ssh server username; "+SshProxyServicePass)
 	flag.StringVar(&sshProxyServiceServeAddress, "s", "127.0.0.1:1080", "serve address; "+SshProxyServiceServeAddress)
-	flag.StringVar(&sshProxyServiceLocalPrivateKey, "F", "", "local ssh private key for ssh username; "+SshProxyServiceLocalPrivateKey)
+	flag.StringVar(&sshProxyServiceLocalPrivateKey, "F", pathLocalPrivateKey, "local ssh private key for ssh username; "+SshProxyServiceLocalPrivateKey)
 	flag.StringVar(&sshProxyServiceLocalKnownHosts, "K", pathLocalKnownHosts, "local ssh known_hosts; "+SshProxyServiceLocalKnownHosts)
 
 	// local exposure
@@ -285,9 +287,12 @@ func main() {
 		return
 	}
 
-	// private key first
+	// password first
 	if cfg.PrivateKey != nil && cfg.Password != "" {
-		cfg.Password = ""
+		cfg.PrivateKey = nil
+	}
+
+	if cfg.PrivateKey != nil {
 		if cfg.KnownHostsFilePath == "" {
 			fmt.Println("Please set ssh known_hosts")
 			return
